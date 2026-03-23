@@ -2,26 +2,23 @@ import tempfile
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.chat_models import ChatOllama
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
 
 # ── Cached embeddings — loaded once per session ───────────────────────────────
 _embeddings_cache = None
 
-def get_embeddings():
+def get_embeddings(api_key: str):
     global _embeddings_cache
     if _embeddings_cache is None:
-        _embeddings_cache = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True, "batch_size": 64},
+        _embeddings_cache = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=api_key,
         )
     return _embeddings_cache
 
 
-# ── Strict system prompt — applied once at the model role level ───────────────
+# ── Strict system prompt ───────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are a document Q&A assistant. Your ONLY job is to answer questions using the provided document excerpts.
 
 STRICT RULES — follow these absolutely:
@@ -35,15 +32,14 @@ STRICT RULES — follow these absolutely:
 
 class RAGChatbot:
 
-    def __init__(self):
-        # ── ChatOllama: uses system/user role separation (much better for instruct models)
-        self.llm = ChatOllama(
-            model="llama3.2",
-            num_predict=512,
-            temperature=0.0,    # fully deterministic — zero creativity/hallucination risk
-            num_ctx=3000,       # enough for 4 chunks of 600 tokens + system prompt
+    def __init__(self, api_key: str):
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=api_key,
+            temperature=0.0,
+            max_output_tokens=1024,
         )
-        self.embeddings = get_embeddings()
+        self.embeddings = get_embeddings(api_key)
         self.last_retrieved_docs = []
 
     def load_pdf(self, uploaded_file):
@@ -78,9 +74,11 @@ class RAGChatbot:
         )
         return True
 
-    def _build_messages(self, question: str, context: str):
-        """Build the chat message list with system prompt + user query."""
-        user_content = f"""DOCUMENT CONTEXT:
+    def _build_prompt(self, question: str, context: str) -> str:
+        """Build a single combined prompt string for Gemini."""
+        return f"""{SYSTEM_PROMPT}
+
+DOCUMENT CONTEXT:
 ---
 {context}
 ---
@@ -89,18 +87,13 @@ QUESTION: {question}
 
 Answer using ONLY the document context above. Do not use outside knowledge."""
 
-        return [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_content),
-        ]
-
     def ask(self, _pipeline, question):
         """Non-streaming version."""
         docs = self.retriever.get_relevant_documents(question)
         self.last_retrieved_docs = docs
         context = "\n\n".join([d.page_content for d in docs])
-        messages = self._build_messages(question, context)
-        response = self.llm.invoke(messages)
+        prompt = self._build_prompt(question, context)
+        response = self.llm.invoke(prompt)
         return response.content
 
     def ask_stream(self, _pipeline, question):
@@ -108,9 +101,9 @@ Answer using ONLY the document context above. Do not use outside knowledge."""
         docs = self.retriever.get_relevant_documents(question)
         self.last_retrieved_docs = docs
         context = "\n\n".join([d.page_content for d in docs])
-        messages = self._build_messages(question, context)
+        prompt = self._build_prompt(question, context)
 
-        for chunk in self.llm.stream(messages):
+        for chunk in self.llm.stream(prompt):
             if chunk.content:
                 yield chunk.content
 
