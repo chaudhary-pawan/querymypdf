@@ -194,7 +194,7 @@ hr { border-color: rgba(255,255,255,0.08) !important; }
 st.markdown("""
 <div class="hero">
     <h1>📄 QueryMyPDF</h1>
-    <p>Drop any PDF. Ask anything. Get instant AI-powered answers — 100% offline.</p>
+    <p>Drop any PDF. Ask anything. Get instant AI-powered answers powered by Gemini.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -213,6 +213,14 @@ with left:
     st.markdown('<div class="section-label">📂 Upload Documents</div>', unsafe_allow_html=True)
     st.markdown('<div class="upload-card">', unsafe_allow_html=True)
 
+    # ── Gemini API Key input ──
+    api_key = st.text_input(
+        "🔑 Gemini API Key",
+        type="password",
+        placeholder="Paste your Google Gemini API key here",
+        help="Get your free key at https://aistudio.google.com/app/apikey",
+    )
+
     uploaded_files = st.file_uploader(
         "Drag & drop PDFs here",
         type="pdf",
@@ -224,7 +232,10 @@ with left:
         st.markdown(f'<div class="pill-info">📎 {len(uploaded_files)} file(s) selected</div>', unsafe_allow_html=True)
 
         if st.button("⚡ Build Knowledge Base"):
-            rag = RAGChatbot()
+            if not api_key.strip():
+                st.error("Please enter your Gemini API key first.")
+                st.stop()
+            rag = RAGChatbot(api_key=api_key.strip())
             all_docs = []
 
             with st.spinner("📘 Reading PDFs..."):
@@ -263,10 +274,10 @@ with left:
         font-size: 1.05rem;
         line-height: 2;
     ">
-        🔒 <b style="color:#94a3b8">Fully Offline</b><br>
-        🧠 <b style="color:#94a3b8">LLaMA 3.2 via Ollama</b><br>
+        ✨ <b style="color:#94a3b8">Gemini 1.5 Flash LLM</b><br>
+        🔢 <b style="color:#94a3b8">Gemini Embeddings</b><br>
         📦 <b style="color:#94a3b8">FAISS Vector Search</b><br>
-        🤗 <b style="color:#94a3b8">HuggingFace Embeddings</b>
+        📄 <b style="color:#94a3b8">PDFPlumber Document Loader</b>
     </div>
     """, unsafe_allow_html=True)
 
@@ -364,6 +375,6 @@ with right:
 # ─── Footer ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="footer">
-    Built with ❤️ using Streamlit · LLaMA 3.2 · FAISS · HuggingFace
+    Built with ❤️ using Streamlit · Gemini 1.5 Flash · FAISS · Google AI
 </div>
 """, unsafe_allow_html=True)
