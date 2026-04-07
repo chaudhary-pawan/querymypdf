@@ -269,16 +269,25 @@ ready   = st.session_state.pdf_ready
 history = st.session_state.chat_history
 
 # Header bar
-status_html = '<span class="sdot"></span>Connected' if ready else ""
-st.markdown(
-    f'<div class="top-header">'
-    f'<span class="top-header-title">AI Chat</span>'
-    f'{"<span class=\\'status-badge\\'>" + status_html + "</span>" if ready else ""}'
-    f'</div>',
-    unsafe_allow_html=True
-)
+if ready:
+    st.markdown(
+        '<div class="top-header">'
+        '<span class="top-header-title">AI Chat</span>'
+        '<span class="status-badge"><span class="sdot"></span>Connected</span>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        '<div class="top-header"><span class="top-header-title">AI Chat</span></div>',
+        unsafe_allow_html=True
+    )
 
-# ── Fixed-height scrollable chat history container ──
+# Track pending question across reruns so user bubble renders INSIDE the container
+if "pending_q" not in st.session_state:
+    st.session_state.pending_q = None
+
+# ── Fixed-height scrollable chat container ──
 chat_box = st.container(height=500, border=False)
 
 with chat_box:
@@ -287,35 +296,40 @@ with chat_box:
         <div class="empty-chat">
             <span class="empty-icon">📄</span>
             <div class="empty-title">Welcome.</div>
-            <div class="empty-sub">Upload a PDF in the sidebar to get started.<br>Ask it anything — I'll dig through every page.</div>
+            <div class="empty-sub">Upload a PDF in the sidebar to get started.<br>Ask it anything — I will dig through every page.</div>
         </div>""", unsafe_allow_html=True)
-    elif not history:
+    elif not history and not st.session_state.pending_q:
         st.markdown("""
         <div class="empty-chat">
             <span class="empty-icon">🧠</span>
             <div class="empty-title rdy">Knowledge Base Online</div>
-            <div class="empty-sub rdy">I've read and indexed your document.<br>What would you like to know?</div>
+            <div class="empty-sub rdy">I have read and indexed your document.<br>What would you like to know?</div>
         </div>""", unsafe_allow_html=True)
     else:
+        # Render all committed history
         for turn in history:
-            q = turn["question"]
-            a = turn["answer"]
+            q      = turn["question"]
+            a      = turn["answer"]
             is_err = turn.get("is_error", False)
-            bubble_cls = "bubble-err" if is_err else "bubble-ai"
+            b_cls  = "bubble-err" if is_err else "bubble-ai"
             lbl_ai = "" if is_err else '<div class="lbl lbl-ai"><span class="ai-dot"></span>Assistant</div>'
+            st.markdown(
+                f'<div class="bubble-user-wrap"><div class="bubble-user"><div class="lbl">You</div>{q}</div></div>',
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f'<div class="bubble-ai-wrap"><div class="{b_cls}">{lbl_ai}{a}</div></div>',
+                unsafe_allow_html=True
+            )
 
+        # If there is a pending question, show its user bubble + a live AI slot
+        if st.session_state.pending_q:
+            pq = st.session_state.pending_q
             st.markdown(
-                f'<div class="bubble-user-wrap">'
-                f'<div class="bubble-user"><div class="lbl">You</div>{q}</div>'
-                f'</div>',
+                f'<div class="bubble-user-wrap"><div class="bubble-user"><div class="lbl">You</div>{pq}</div></div>',
                 unsafe_allow_html=True
             )
-            st.markdown(
-                f'<div class="bubble-ai-wrap">'
-                f'<div class="{bubble_cls}">{lbl_ai}{a}</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
+            ai_slot = st.empty()
 
 
 # ─── Input bar ───────────────────────────────────────────────────────────────
@@ -329,29 +343,25 @@ if ready:
         st.markdown('<div class="stop-col">', unsafe_allow_html=True)
         if st.button("⏸", key="stop_btn", help="Stop generation"):
             st.session_state.stop_stream = True
-            if history and history[-1].get("answer") == "▌":
-                history.pop()
+            st.session_state.pending_q   = None
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    if question:
+    # ── Step 1: New question submitted → store as pending and rerun to show bubble ──
+    if question and not st.session_state.pending_q:
+        st.session_state.pending_q  = question
         st.session_state.stop_stream = False
+        st.rerun()
 
-        # Show user bubble immediately in the stream zone (below fixed container)
-        st.markdown(
-            f'<div class="bubble-user-wrap">'
-            f'<div class="bubble-user"><div class="lbl">You</div>{question}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        # AI streaming response — renders token by token in real time
-        ai_slot = st.empty()
+    # ── Step 2: Pending question exists → stream AI response inside the container ──
+    if st.session_state.pending_q:
+        pq           = st.session_state.pending_q
         full_response = ""
+        is_err        = False
 
         try:
             for chunk, metadata in chatbot.stream(
-                {"messages": [HumanMessage(content=question)]},
+                {"messages": [HumanMessage(content=pq)]},
                 config=config,
                 stream_mode="messages"
             ):
@@ -368,36 +378,31 @@ if ready:
                     if token:
                         full_response += token
                         ai_slot.markdown(
-                            f'<div class="bubble-ai-wrap">'
-                            f'<div class="bubble-ai">'
+                            f'<div class="bubble-ai-wrap"><div class="bubble-ai">'
                             f'<div class="lbl lbl-ai"><span class="ai-dot"></span>Assistant</div>'
-                            f'{full_response}▌'
-                            f'</div></div>',
+                            f'{full_response}&#9646;</div></div>',
                             unsafe_allow_html=True
                         )
 
-            # Remove cursor on completion
+            # Remove cursor
             if full_response:
                 ai_slot.markdown(
-                    f'<div class="bubble-ai-wrap">'
-                    f'<div class="bubble-ai">'
+                    f'<div class="bubble-ai-wrap"><div class="bubble-ai">'
                     f'<div class="lbl lbl-ai"><span class="ai-dot"></span>Assistant</div>'
-                    f'{full_response}'
-                    f'</div></div>',
+                    f'{full_response}</div></div>',
                     unsafe_allow_html=True
                 )
 
-            # Fallback: invoke if stream returned nothing
-            if not full_response:
-                with st.spinner(""):
-                    result = chatbot.invoke(
-                        {"messages": [HumanMessage(content=question)]}, config=config
-                    )
-                    raw = result["messages"][-1].content
-                    full_response = (
-                        "".join(b["text"] for b in raw if isinstance(b, dict) and "text" in b)
-                        if isinstance(raw, list) else raw
-                    )
+            # Fallback invoke if stream returned nothing
+            if not full_response and not st.session_state.get("stop_stream"):
+                result = chatbot.invoke(
+                    {"messages": [HumanMessage(content=pq)]}, config=config
+                )
+                raw = result["messages"][-1].content
+                full_response = (
+                    "".join(b["text"] for b in raw if isinstance(b, dict) and "text" in b)
+                    if isinstance(raw, list) else raw
+                )
                 ai_slot.markdown(
                     f'<div class="bubble-ai-wrap"><div class="bubble-ai">'
                     f'<div class="lbl lbl-ai"><span class="ai-dot"></span>Assistant</div>'
@@ -409,23 +414,22 @@ if ready:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
                 full_response = "The AI is rate-limited (Gemini quota exceeded). Please wait and try again."
-                is_err = True
             elif "503" in err:
                 full_response = "The AI service is temporarily unavailable. Retry in a few seconds."
-                is_err = True
             else:
                 full_response = "An error occurred. Please try again."
-                is_err = True
+            is_err = True
             ai_slot.markdown(
                 f'<div class="bubble-ai-wrap"><div class="bubble-err">{full_response}</div></div>',
                 unsafe_allow_html=True
             )
 
-        # Persist to history and rerun to move into the fixed container
+        # Commit to history, clear pending, rerun to refresh container
         if full_response:
             st.session_state.chat_history.append({
-                "question": question,
-                "answer": full_response,
-                "is_error": locals().get("is_err", False),
+                "question": pq,
+                "answer":   full_response,
+                "is_error": is_err,
             })
+        st.session_state.pending_q = None
         st.rerun()
